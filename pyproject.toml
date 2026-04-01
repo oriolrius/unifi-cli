@@ -1,0 +1,46 @@
+[project]
+name = "unifi-cli-tool"
+dynamic = ["version"]
+description = "CLI tool for managing UniFi UDM Pro networks - list clients, devices, WLANs with SSO + TOTP MFA support"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+authors = [
+    { name = "Oriol Rius" },
+]
+keywords = ["unifi", "ubiquiti", "udm", "network", "cli", "aiounifi"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Networking :: Monitoring",
+]
+dependencies = [
+    "aiounifi>=90",
+    "aiohttp>=3.9",
+    "click>=8.1",
+    "pyotp>=2.9",
+    "rich>=13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/oriolrius/unifi-cli"
+Repository = "https://github.com/oriolrius/unifi-cli"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+unifi-cli = "unifi_cli.cli:main"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+version_files = ["unifi_cli/__init__.py:__version__"]
+tag_format = "v$version"
+update_changelog_on_bump = true
+
+[tool.setuptools.dynamic]
+version = {attr = "unifi_cli.__version__"}
