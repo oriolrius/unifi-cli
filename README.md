@@ -16,11 +16,11 @@ CLI tool for managing UniFi UDM Pro networks. Built on [aiounifi](https://github
 
 ```bash
 # Run directly with uvx (no installation needed)
-uvx unifi-cli-tool configure
-uvx unifi-cli-tool clients
+uvx --from "git+https://github.com/oriolrius/unifi-cli.git" unifi-cli configure
+uvx --from "git+https://github.com/oriolrius/unifi-cli.git" unifi-cli clients
 
-# Or install with uv
-uv tool install unifi-cli-tool
+# Or install as a tool
+uv tool install "git+https://github.com/oriolrius/unifi-cli.git"
 unifi-cli configure
 unifi-cli clients
 ```
