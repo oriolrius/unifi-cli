@@ -233,6 +233,264 @@ async def _networks(config, fmt):
             print_table(columns, rows, title="Wireless Networks")
 
 
+# --- wan ---
+
+@cli.command()
+@click.option("--uplink", is_flag=True, help="Show uplink details")
+@click.option("--ports", is_flag=True, help="Show all ethernet ports")
+@click.option("--dns", is_flag=True, help="Show DNS configuration")
+@click.option("--traffic", is_flag=True, help="Show traffic counters")
+@click.option("--speedtest", is_flag=True, help="Show speedtest status")
+@click.pass_context
+def wan(ctx, uplink, ports, dns, traffic, speedtest):
+    """Show WAN status and details.
+
+    By default shows a summary. Use flags to drill down into specific sections.
+    """
+    run(_wan(ctx.obj["config"], ctx.obj["fmt"], uplink, ports, dns, traffic, speedtest))
+
+
+async def _wan(config, fmt, uplink, ports, dns, traffic, speedtest):
+    async with get_controller(config) as ctrl:
+        await ctrl.devices.update()
+
+        # Find the UDM Pro device
+        udmp = None
+        for mac, device in ctrl.devices.items():
+            raw = device.raw
+            if raw.get("type") == "udm" or raw.get("name") == "UDMPRO":
+                udmp = raw
+                break
+
+        if not udmp:
+            console.print("[red]UDM Pro device not found[/red]")
+            return
+
+        # If no flags, show everything grouped
+        if not any([uplink, ports, dns, traffic, speedtest]):
+            # Summary view
+            rows = []
+            wan_status = udmp.get("last_wan_status", {})
+            wan_ips = udmp.get("last_wan_interfaces", {})
+            for wan_name, info in wan_ips.items():
+                ip = info.get("ip", "N/A")
+                alive = info.get("alive", False)
+                rows.append({
+                    "wan": wan_name,
+                    "ip": ip,
+                    "status": "online" if alive else "offline",
+                    "latency": f"{udmp.get('wan1', {}).get('latency', '?')}ms" if wan_name == "WAN" else "-",
+                    "speed": _fmt_speed(udmp.get("wan1", {}).get("speed", 0)) if wan_name == "WAN" else "-",
+                    "uptime": _fmt_duration(udmp.get("uplink", {}).get("uptime", 0)) if wan_name == "WAN" else "-",
+                })
+            columns = [
+                ("wan", "WAN"),
+                ("ip", "IP"),
+                ("status", "Status"),
+                ("latency", "Latency"),
+                ("speed", "Speed"),
+                ("uptime", "Uptime"),
+            ]
+            if fmt == "json":
+                print_json(rows)
+            elif fmt == "csv":
+                print_csv(columns, rows)
+            else:
+                print_table(columns, rows, title="WAN Summary")
+
+            console.print()
+            # Quick counters
+            uplink_data = udmp.get("uplink", {})
+            console.print(f"[bold]WAN Traffic (Total):[/bold]")
+            console.print(f"  RX: {_fmt_bytes(uplink_data.get('rx_bytes', 0))}")
+            console.print(f"  TX: {_fmt_bytes(uplink_data.get('tx_bytes', 0))}")
+            rx_mbps = uplink_data.get('rx_bytes-r', 0) * 8 / 1_000_000
+            tx_mbps = uplink_data.get('tx_bytes-r', 0) * 8 / 1_000_000
+            console.print(f"  Current: {_fmt_speed(rx_mbps)} ↓ / {_fmt_speed(tx_mbps)} ↑")
+            console.print()
+            console.print(f"[bold]DNS Shield:[/bold] {udmp.get('dns_shield_server_list_hash', '?')[:16]}... ({udmp.get('ids_ips_signature', {}).get('rule_count', 0)} rules)")
+
+        # Uplink detail
+        if uplink:
+            ul = udmp.get("uplink", {})
+            wan1 = udmp.get("wan1", {})
+            wan2 = udmp.get("wan2", {})
+
+            rows = [
+                {
+                    "interface": "WAN",
+                    "up": "yes" if ul.get("up") else "no",
+                    "ip": ul.get("ip", "?"),
+                    "netmask": ul.get("netmask", "?"),
+                    "gateway": "?" if ul.get("ip") == "172.19.0.3" else "?",
+                    "dns": ", ".join(ul.get("nameservers_dynamic", [])),
+                    "latency_ms": ul.get("latency", "?"),
+                    "speed": _fmt_speed(wan1.get("speed", 0)),
+                    "duplex": "full" if wan1.get("full_duplex") else "half",
+                    "type": ul.get("type", "?"),
+                },
+                {
+                    "interface": "WAN2",
+                    "up": "yes" if wan2.get("up") else "no",
+                    "ip": wan2.get("ip", "?"),
+                    "netmask": "?" if not wan2.get("ip") else "255.255.255.0",
+                    "gateway": "?",
+                    "dns": "-",
+                    "latency_ms": "-",
+                    "speed": _fmt_speed(wan2.get("speed", 0)),
+                    "duplex": "full" if wan2.get("full_duplex") else "half",
+                    "type": wan2.get("type", "?"),
+                },
+            ]
+            columns = [
+                ("interface", "Interface"),
+                ("up", "Up"),
+                ("ip", "IP"),
+                ("netmask", "Netmask"),
+                ("gateway", "Gateway"),
+                ("dns", "DNS"),
+                ("latency_ms", "Latency"),
+                ("speed", "Speed"),
+                ("duplex", "Duplex"),
+                ("type", "Type"),
+            ]
+            if fmt == "json":
+                print_json(rows)
+            elif fmt == "csv":
+                print_csv(columns, rows)
+            else:
+                print_table(columns, rows, title="WAN Uplinks")
+
+        # Ports
+        if ports:
+            rows = []
+            for p in udmp.get("port_table", []):
+                rows.append({
+                    "port": p.get("ifname", "?"),
+                    "name": p.get("name", "?"),
+                    "network": p.get("network_name", "?"),
+                    "up": "yes" if p.get("up") else "no",
+                    "speed": _fmt_speed(p.get("speed", 0)),
+                    "duplex": "full" if p.get("full_duplex") else "half" if p.get("speed", 0) > 0 else "-",
+                    "rx_bytes": _fmt_bytes(p.get("rx_bytes", 0)),
+                    "tx_bytes": _fmt_bytes(p.get("tx_bytes", 0)),
+                    "current_rx": _fmt_speed(p.get("rx_rate", 0) / 1_000_000),
+                    "current_tx": _fmt_speed(p.get("tx_rate", 0) / 1_000_000),
+                    "mac": p.get("mac", "?"),
+                })
+            columns = [
+                ("port", "Port"),
+                ("name", "Name"),
+                ("network", "Network"),
+                ("up", "Up"),
+                ("speed", "Speed"),
+                ("duplex", "Duplex"),
+                ("rx_bytes", "RX Total"),
+                ("tx_bytes", "TX Total"),
+                ("current_rx", "RX/s"),
+                ("current_tx", "TX/s"),
+                ("mac", "MAC"),
+            ]
+            if fmt == "json":
+                print_json(rows)
+            elif fmt == "csv":
+                print_csv(columns, rows)
+            else:
+                print_table(columns, rows, title="Ethernet Ports")
+
+        # DNS
+        if dns:
+            ul = udmp.get("uplink", {})
+            sp = udmp.get("speedtest-status", {})
+            ids = udmp.get("ids_ips_signature", {})
+            rows = [
+                {
+                    "service": "Primary DNS",
+                    "server": ul.get("nameservers_dynamic", ["?"])[0] if ul.get("nameservers_dynamic") else "?",
+                },
+                {
+                    "service": "Secondary DNS",
+                    "server": ul.get("nameservers_dynamic", ["?", "?"])[1] if len(ul.get("nameservers_dynamic", [])) > 1 else "?",
+                },
+                {
+                    "service": "DNS Shield",
+                    "server": "Enabled" if udmp.get("dns_shield_server_list_hash") else "Disabled",
+                },
+                {
+                    "service": "IDS/IPS Signature",
+                    "server": f"{ids.get('rule_count', 0)} rules (ET {ids.get('signature_type', '')})",
+                },
+                {
+                    "service": "Speedtest Server",
+                    "server": sp.get("server", {}).get("provider", "?") or "?",
+                },
+            ]
+            columns = [("service", "Service"), ("server", "Server / Info")]
+            if fmt == "json":
+                print_json(rows)
+            elif fmt == "csv":
+                print_csv(columns, rows)
+            else:
+                print_table(columns, rows, title="DNS & Security")
+
+        # Traffic
+        if traffic:
+            ul = udmp.get("uplink", {})
+            rows = [
+                {
+                    "counter": "Total RX",
+                    "bytes": _fmt_bytes(ul.get("rx_bytes", 0)),
+                    "packets": f"{ul.get('rx_packets', 0):,}",
+                    "dropped": f"{ul.get('rx_dropped', 0):,}",
+                    "errors": f"{ul.get('rx_errors', 0):,}",
+                    "current": f"{_fmt_speed(ul.get('rx_bytes-r', 0) * 8)}/s",
+                },
+                {
+                    "counter": "Total TX",
+                    "bytes": _fmt_bytes(ul.get("tx_bytes", 0)),
+                    "packets": f"{ul.get('tx_packets', 0):,}",
+                    "dropped": f"{ul.get('tx_dropped', 0):,}",
+                    "errors": f"{ul.get('tx_errors', 0):,}",
+                    "current": f"{_fmt_speed(ul.get('tx_bytes-r', 0) * 8)}/s",
+                },
+            ]
+            columns = [("counter", "Counter"), ("bytes", "Bytes"), ("packets", "Packets"), ("dropped", "Dropped"), ("errors", "Errors"), ("current", "Current Rate")]
+            if fmt == "json":
+                print_json(rows)
+            elif fmt == "csv":
+                print_csv(columns, rows)
+            else:
+                print_table(columns, rows, title="WAN Traffic Counters")
+
+        # Speedtest
+        if speedtest:
+            sp = udmp.get("speedtest-status", {})
+            rows = [{
+                "status": sp.get("status_summary", "?"),
+                "latency_ms": sp.get("latency", "?"),
+                "download": f"{sp.get('xput_download', 0):.1f} Mbps" if sp.get("xput_download") else "not run",
+                "upload": f"{sp.get('xput_upload', 0):.1f} Mbps" if sp.get("xput_upload") else "not run",
+                "server": f"{sp.get('server', {}).get('city', '')}, {sp.get('server', {}).get('country', '')}" or "?",
+                "provider": sp.get("server", {}).get("provider", "?"),
+                "last_run": sp.get("runtime", "never"),
+            }]
+            columns = [
+                ("status", "Status"),
+                ("latency_ms", "Latency"),
+                ("download", "Download"),
+                ("upload", "Upload"),
+                ("server", "Server"),
+                ("provider", "Provider"),
+                ("last_run", "Last Run"),
+            ]
+            if fmt == "json":
+                print_json(rows)
+            elif fmt == "csv":
+                print_csv(columns, rows)
+            else:
+                print_table(columns, rows, title="Speedtest")
+
+
 # --- raw ---
 
 @cli.command()
@@ -255,6 +513,28 @@ async def _raw(config, endpoint):
 
 
 # --- helpers ---
+
+def _fmt_speed(mbps: int | float) -> str:
+    """Format megabits per second as human-readable."""
+    if mbps <= 0:
+        return "-"
+    for unit in ["Mbps", "Gbps"]:
+        if mbps < 1000:
+            return f"{mbps:.0f} {unit}"
+        mbps /= 1000
+    return f"{mbps:.1f} Tbps"
+
+
+def _fmt_bytes(num: int) -> str:
+    """Format bytes as human-readable."""
+    if num <= 0:
+        return "-"
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if num < 1024:
+            return f"{num:.1f} {unit}"
+        num /= 1024
+    return f"{num:.1f} PB"
+
 
 def _fmt_duration(seconds: int) -> str:
     if seconds <= 0:
