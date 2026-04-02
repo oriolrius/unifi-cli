@@ -90,6 +90,10 @@ If the cached token expires, it automatically re-authenticates.
 - UniFi OS controller (UDM, UDM Pro, UDM SE, Cloud Key Gen2+)
 - Ubiquiti account with TOTP MFA enabled
 
+## Acknowledgments
+
+This tool is built on [aiounifi](https://github.com/Kane610/aiounifi) by Kane610. The library's async architecture and typed data models made it a pleasure to work with. Special thanks to the aiounifi team for maintaining this project and to the Home Assistant community for the extensive documentation of the UniFi API quirks.
+
 ## License
 
 MIT
